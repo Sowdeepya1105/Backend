@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: issue-tracker-backend
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: MONGO_URI
+        fromDatabase:
+          name: mongodb
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: EXTERNAL_API_BASE_URL
+        value: https://t4e-testserver.onrender.com/api
+      - key: EXTERNAL_API_USERNAME
+        value: INAKOLLU SOWDEEPYA REDDY
+      - key: EXTERNAL_API_PASSWORD
+        value: 496384
+      - key: EXTERNAL_API_AUTH_PATH
+        value: /auth/login
+      - key: EXTERNAL_API_DATA_PATH
+        value: /issues
+      - key: EXTERNAL_API_AUTH_USERNAME_FIELD
+        value: username
+      - key: EXTERNAL_API_AUTH_PASSWORD_FIELD
+        value: password
