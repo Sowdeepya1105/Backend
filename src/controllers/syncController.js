@@ -34,12 +34,21 @@ const safeGetToken = (data) => {
   return data.token || data.accessToken || data.authToken || data.data?.token || data.data?.accessToken || null;
 };
 
-const getExternalToken = async (baseUrl, loginEndpoint, usernameField, passwordField, username, password) => {
+const safeGetDataUrl = (data) => {
+  if (!data) return null;
+  if (typeof data === 'string') return null;
+  return data.dataUrl || data.url || data.data?.dataUrl || data.data?.url || null;
+};
+
+const getExternalToken = async (baseUrl, loginEndpoint, usernameField, passwordField, username, password, setName) => {
   const url = `${baseUrl.replace(/\/$/, '')}${loginEndpoint.startsWith('/') ? loginEndpoint : `/${loginEndpoint}`}`;
   const payload = {
     [usernameField]: username,
     [passwordField]: password,
   };
+  if (setName) {
+    payload.set = setName;
+  }
 
   const response = await axios.post(url, payload).catch((err) => ({ error: err, response: err.response }));
   if (response?.error && response.response) {
@@ -47,17 +56,19 @@ const getExternalToken = async (baseUrl, loginEndpoint, usernameField, passwordF
   }
 
   const token = safeGetToken(response.data);
+  const dataUrl = safeGetDataUrl(response.data);
   if (!token) {
     throw new Error('External auth did not return a token');
   }
 
-  return token;
+  return { token, dataUrl };
 };
 
 const syncDataset = async (req, res) => {
   const baseUrl = process.env.EXTERNAL_API_BASE_URL || process.env.API_BASE_URL;
   const username = process.env.EXTERNAL_API_USERNAME || process.env.STUDENT_ID;
   const password = process.env.EXTERNAL_API_PASSWORD || process.env.STUDENT_PASSWORD;
+  const setName = process.env.EXTERNAL_API_SET_NAME || process.env.SET_NAME;
 
   if (!baseUrl || !username || !password) {
     return errorResponse(res, 'External dataset API credentials are not configured', 500);
@@ -79,14 +90,17 @@ const syncDataset = async (req, res) => {
     '/',
   ].filter(Boolean);
 
-  const usernameField = process.env.EXTERNAL_API_AUTH_USERNAME_FIELD || 'username';
+  const usernameField = process.env.EXTERNAL_API_AUTH_USERNAME_FIELD || (process.env.STUDENT_ID ? 'studentId' : 'username');
   const passwordField = process.env.EXTERNAL_API_AUTH_PASSWORD_FIELD || 'password';
 
   let token = null;
   let authError = null;
+  let dataUrl = null;
   for (const authPath of authPaths) {
     try {
-      token = await getExternalToken(baseUrl, authPath, usernameField, passwordField, username, password);
+      const result = await getExternalToken(baseUrl, authPath, usernameField, passwordField, username, password, setName);
+      token = result.token;
+      dataUrl = result.dataUrl || dataUrl;
       break;
     } catch (error) {
       authError = error;
@@ -100,20 +114,32 @@ const syncDataset = async (req, res) => {
   let records = [];
   let lastFetchError = null;
 
-  for (const dataPath of dataPaths) {
-    const url = `${baseUrl.replace(/\/$/, '')}${dataPath.startsWith('/') ? dataPath : `/${dataPath}`}`;
-    const response = await axios
-      .get(url, { headers: { Authorization: `Bearer ${token}` } })
-      .catch((err) => ({ error: err, response: err.response }));
-
+  if (dataUrl) {
+    const url = dataUrl.startsWith('http') ? dataUrl : `${baseUrl.replace(/\/$/, '')}${dataUrl.startsWith('/') ? dataUrl : `/${dataUrl}`}`;
+    const response = await axios.get(url, { headers: { Authorization: `Bearer ${token}` } }).catch((err) => ({ error: err, response: err.response }));
     if (response?.error && response.response) {
       lastFetchError = response.error;
-      continue;
+    } else {
+      records = Array.isArray(response.data) ? response.data : response.data?.data || [];
     }
+  }
 
-    records = Array.isArray(response.data) ? response.data : response.data?.data || [];
-    if (records.length > 0) {
-      break;
+  if (!Array.isArray(records) || records.length === 0) {
+    for (const dataPath of dataPaths) {
+      const url = `${baseUrl.replace(/\/$/, '')}${dataPath.startsWith('/') ? dataPath : `/${dataPath}`}`;
+      const response = await axios
+        .get(url, { headers: { Authorization: `Bearer ${token}` } })
+        .catch((err) => ({ error: err, response: err.response }));
+
+      if (response?.error && response.response) {
+        lastFetchError = response.error;
+        continue;
+      }
+
+      records = Array.isArray(response.data) ? response.data : response.data?.data || [];
+      if (records.length > 0) {
+        break;
+      }
     }
   }
 
